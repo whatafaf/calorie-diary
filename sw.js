@@ -1,5 +1,5 @@
 // Offline support. Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = "cd-2026-11-12g";
+const VERSION = "cd-2026-11-12h";
 // No "./" here: Chrome treats it and index.html as the same entry and the whole install fails.
 // Navigations are answered from "index.html" below anyway.
 const SHELL = [

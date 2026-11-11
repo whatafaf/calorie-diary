@@ -291,6 +291,11 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;backgroun
 .pagetitle.back{display:flex;align-items:center;gap:4px;padding-left:0}
 .pane .card{margin-top:16px}
 .pane .card .chips{padding-top:8px}
+.mealbtns{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:4px 16px 8px}
+.meal .mealbtns .add{margin:0}
+.btn.text.small{height:32px}
+.daychips{display:flex;gap:8px;flex-wrap:wrap;margin:0 4px}
+.banner .acts{display:flex;gap:4px;margin:6px 0 -4px -12px}
 .hidden{display:none!important}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (max-width:370px){.ringwrap{width:124px;height:124px}.ringc b{font-size:28px}.sumside .k{font-size:24px}.grid4{grid-template-columns:1fr 1fr}.summary{gap:14px}}
@@ -320,7 +325,7 @@ var MEALS=[["breakfast","Breakfast","egg_alt"],["lunch","Lunch","lunch_dining"],
 var DOW=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 var DOW3=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 var DEF_GOAL={kcal:2000}; // stored as "kcal" internally; shown as "cal" (NZ usage)
-var LS="calorie-diary.v2", LS_KEY="calorie-diary.apikey";
+var LS="calorie-diary.v2", LS_KEY="calorie-diary.apikey", LS_BK="calorie-diary.lastBackup", LS_BKS="calorie-diary.backupSnooze";
 var S={days:{},foods:[],weights:{},goals:defGoals(),date:todayKey(),view:"day",sheet:null,pane:null};
 var claudeMod=null, installEvt=null, snackTimer=null;
 
@@ -433,6 +438,11 @@ function dayHtml(){
   var h='<section class="card" aria-label="Totals for the day"><div class="summary">'+ring(t.kcal,g.kcal)
     +'<div class="sumside"><div class="k'+(left<0?" over":"")+'">'+fmtK(Math.abs(left))+'</div><div class="lab">'+(left>=0?"cal remaining":"cal over target")+'</div>'
     +'<button class="chip-assist" data-act="override">'+ic("edit_calendar")+'<span>'+esc(src)+'</span></button></div></div></section>';
+  if(S.date<=todayKey()&&!S.weights[S.date])h+='<div class="daychips"><button class="chip-assist" data-act="wquick">'+ic("monitor_weight")+'<span>Log weight</span></button></div>';
+  var due=backupDue();
+  if(due)h+='<div class="banner" id="bkBanner">'+ic("cloud_upload")+'<span>'+(due.never?"Your diary has never been backed up. It only lives on this phone.":"Your last backup was "+due.days+" days ago.")+' Save a copy to Google Drive.<span class="acts"><button class="btn text small" data-act="export">Back up now</button><button class="btn text small" data-act="bksnooze">Later</button></span></span></div>';
+  var prevK=shift(S.date,-1),prevLbl=dayLabel(prevK),prevList=dayEntries(prevK);
+  if(/^(Today|Yesterday|Tomorrow)$/.test(prevLbl))prevLbl=prevLbl.toLowerCase();
   MEALS.forEach(function(m){
     var items=list.filter(function(e){return e.meal===m[0];});
     var mt=totals(items);
@@ -446,7 +456,9 @@ function dayHtml(){
         +'<span class="k">'+fmtK(e.kcal*s)+' cal</span></button>';
     });
     if(!items.length)h+='<div class="empty">Nothing logged yet</div>';
-    h+='<button class="btn tonal small add" data-act="add" data-meal="'+m[0]+'">'+ic("add")+'Add</button></section>';
+    var canCopy=!items.length&&prevList.some(function(e){return e.meal===m[0];});
+    h+='<div class="mealbtns"><button class="btn tonal small add" data-act="add" data-meal="'+m[0]+'">'+ic("add")+'Add</button>'
+      +(canCopy?'<button class="btn text small" data-act="copyprev" data-meal="'+m[0]+'">'+ic("content_copy")+'Same as '+esc(prevLbl)+'</button>':"")+'</div></section>';
   });
   h+='<p class="note">'+ic("smartphone")+'<span>Your diary is saved on this phone. Back it up from Settings now and then.</span></p>';
   return h;
@@ -494,6 +506,46 @@ function histHtml(){
       +'<div class="l2"><span class="'+(over?"over":"under")+'">'+fmtK(Math.abs(d))+' '+(over?"over":"under")+'</span></div></button>';
   });
   return h+'</div>';
+}
+
+/* ---------- Backup reminder ---------- */
+function lsNum(k){try{return +localStorage.getItem(k)||0;}catch(e){return 0;}}
+// Due once there is a week of diary to lose, then every 14 days. "Later" hides it for 3 days.
+function backupDue(){
+  var n=Object.keys(S.days).filter(function(k){return S.days[k].length;}).length;
+  if(n<7||lsNum(LS_BKS)>Date.now())return null;
+  var last=lsNum(LS_BK);
+  if(!last)return {never:true};
+  var days=Math.floor((Date.now()-last)/864e5);
+  return days>=14?{days:days}:null;
+}
+function markBackup(){try{localStorage.setItem(LS_BK,String(Date.now()));localStorage.removeItem(LS_BKS);}catch(e){}}
+
+/* ---------- Recent foods ---------- */
+var RECENT=[];
+// What was logged lately, newest first, one row per food and serving
+function recentFoods(){
+  var seen={},out=[];
+  Object.keys(S.days).sort().reverse().slice(0,60).forEach(function(k){
+    S.days[k].slice().sort(function(a,b){return (b.t||0)-(a.t||0);}).forEach(function(e){
+      var id=(e.name||"").toLowerCase()+"|"+(e.serving||"")+"|"+(e.servings||1);
+      if(!e.name||seen[id]||out.length>=40)return;
+      seen[id]=1;out.push({name:e.name,serving:e.serving||"1 serving",servings:e.servings||1,kcal:e.kcal||0,barcode:e.barcode||""});
+    });
+  });
+  return out;
+}
+function recentRow(i){
+  var r=RECENT[i];
+  return '<button class="li" data-act="userecent" data-i="'+i+'">'+foodRow({name:r.name,serving:(r.servings!==1?fmt(r.servings)+" × ":"")+r.serving,kcal:r.kcal*r.servings})+'</button>';
+}
+function weighHtml(){
+  var sh=S.sheet;
+  var h=head("Weight for "+dayShort(S.date));
+  h+='<label class="field"><span>Weight (kg)</span><input id="wqKg" type="number" inputmode="decimal" step="any" min="20" max="400" placeholder="e.g. 85.4"></label>';
+  if(sh.error)h+=errBox(sh.error);
+  h+='<div class="row"><button class="btn filled" data-act="wquicksave">'+ic("check")+'Save weight</button></div>';
+  return h;
 }
 
 /* ---------- Weight ---------- */
@@ -570,7 +622,7 @@ function closeSheet(){stopScan();if(S.sheet&&S.sheet.previewUrl)try{URL.revokeOb
 function paintSheet(){
   var sh=S.sheet;
   if(!sh){$("#sheetHost").innerHTML="";return;}
-  var fn={menu:menuHtml,scan:scanHtml,lookup:lookupHtml,unknown:unknownHtml,meal:mealPhotoHtml,describe:describeHtml,label:labelHtml,form:formHtml,override:overrideHtml}[sh.mode];
+  var fn={menu:menuHtml,scan:scanHtml,lookup:lookupHtml,unknown:unknownHtml,meal:mealPhotoHtml,describe:describeHtml,label:labelHtml,form:formHtml,override:overrideHtml,weigh:weighHtml}[sh.mode];
   var old=$(".sheet"),keep=old?old.scrollTop:0;
   $("#sheetHost").innerHTML='<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="'+esc(sh.title||"Add food")+'"><div class="handle" aria-hidden="true"></div>'+fn()+'</div></div>';
   if(old){var s=$(".sheet");s.style.animation="none";$(".scrim").style.animation="none";s.scrollTop=keep;}
@@ -623,7 +675,9 @@ function searchCommon(q){
 function libList(q){
   q=q.toLowerCase().trim();
   var h="";
+  RECENT=recentFoods();
   if(!q){
+    if(RECENT.length)h+='<h4>Recent</h4><div class="list">'+RECENT.slice(0,8).map(function(r,i){return recentRow(i);}).join("")+'</div>';
     h+='<h4>My foods</h4>';
     if(!S.foods.length)return h+'<p class="muted">Search above for everyday foods like coffee, toast or a banana. Foods you save appear here for quick adding.</p>';
     return h+'<div class="list">'+S.foods.slice(0,40).map(myRow).join("")+'</div>';
@@ -631,6 +685,9 @@ function libList(q){
   var words=q.split(/\s+/);
   var mine=S.foods.filter(function(f){var n=f.name.toLowerCase();return words.every(function(w){return n.indexOf(w)>-1;});}).slice(0,20);
   var common=searchCommon(q);
+  var rec=[];
+  RECENT.forEach(function(r,i){var n=r.name.toLowerCase();if(rec.length<6&&words.every(function(w){return n.indexOf(w)>-1;}))rec.push(i);});
+  if(rec.length)h+='<h4>Recent</h4><div class="list">'+rec.map(recentRow).join("")+'</div>';
   if(mine.length)h+='<h4>My foods</h4><div class="list">'+mine.map(myRow).join("")+'</div>';
   if(common.length){
     h+='<h4>Common foods</h4><div class="list">'+common.map(function(x){
@@ -638,7 +695,7 @@ function libList(q){
       return '<button class="li" data-act="usecommon" data-i="'+x.i+'">'+foodRow({name:c[0],serving:c[1],kcal:c[2]})+'</button>';
     }).join("")+'</div><p class="muted" style="margin-top:12px">Typical values. You can change the amount on the next screen.</p>';
   }
-  if(!mine.length&&!common.length)h+='<p class="muted" style="margin-top:16px">No matches. Try a simpler word, or let Claude estimate it.</p>';
+  if(!mine.length&&!common.length&&!rec.length)h+='<p class="muted" style="margin-top:16px">No matches. Try a simpler word, or let Claude estimate it.</p>';
   h+='<div class="list"><button class="li" data-act="describeq"><span class="av">'+ic("chat")+'</span><span class="tx"><b>Not here? Describe it</b><small>Claude estimates “'+esc(q.slice(0,60))+'”</small></span>'+ic("chevron_right","tr")+'</button></div>';
   return h;
 }
@@ -1055,6 +1112,8 @@ function settingsHtml(){
   if(P.keyMsg)h+=P.keyOk?'<div class="ok">'+ic("check_circle")+'<span>'+esc(P.keyMsg)+'</span></div>':errBox(P.keyMsg);
   h+='<h4>Backup</h4>';
   h+='<p class="muted">Everything lives on this phone. Save a backup now and then (Google Drive is a good place), so a lost or reset phone does not lose your history.</p>';
+  var lb=lsNum(LS_BK);
+  h+='<p class="muted">'+(lb?"Last backup from this phone: "+esc(dayShort(keyOf(new Date(lb))))+".":"No backup saved from this phone yet.")+' The Diary reminds you every two weeks.</p>';
   h+='<div class="list">'+li("export","cloud_upload","Save backup","Share or save a backup file")+li("import","settings_backup_restore","Restore backup","Replace this phone’s diary with a backup")+'</div>';
   h+='<input type="file" id="fImport" accept="application/json,.json" class="hidden">';
   if(P.dataMsg)h+=P.dataOk?'<div class="ok">'+ic("check_circle")+'<span>'+esc(P.dataMsg)+'</span></div>':errBox(P.dataMsg);
@@ -1079,12 +1138,14 @@ function exportData(){
   var name="calorie-diary-backup-"+todayKey()+".json";
   var file=null;try{file=new File([blob],name,{type:"application/json"});}catch(e){}
   if(file&&navigator.canShare&&navigator.canShare({files:[file]})){
-    navigator.share({files:[file],title:"Calorie diary backup"}).catch(function(){});
+    navigator.share({files:[file],title:"Calorie diary backup"}).then(function(){markBackup();if(!S.sheet)render();}).catch(function(){});
   }else{
     var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();
     setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},2000);
+    markBackup();
   }
-  S.pane.dataOk=true;S.pane.dataMsg="Backup created: "+name;render();
+  if(S.pane){S.pane.dataOk=true;S.pane.dataMsg="Backup created: "+name;}else snack("Backup file created");
+  render();
 }
 function importData(file){
   var P=S.pane;
@@ -1164,6 +1225,20 @@ document.addEventListener("click",function(ev){
       openSheet({mode:"form",title:"Add food",meal:sh.meal,back:"menu",draft:draftFrom({},{barcode:sh.code||"",save:true,source:"scan"})});break;
     case "manual":
       openSheet({mode:"form",title:"Add food",meal:sh.meal,back:"menu",draft:draftFrom({},{save:true})});break;
+    case "userecent":
+      var rf=RECENT[+el.getAttribute("data-i")];
+      if(rf)openSheet({mode:"form",title:"Add food",meal:sh.meal,back:"menu",draft:draftFrom(rf,{servings:rf.servings,source:"library"})});break;
+    case "copyprev":
+      var cm=el.getAttribute("data-meal"),src=dayEntries(shift(S.date,-1)).filter(function(x){return x.meal===cm;});
+      src.forEach(function(x){(S.days[S.date]=S.days[S.date]||[]).push(Object.assign({},x,{id:uid(),t:Date.now()}));});
+      if(src.length){save();render();snack("Copied "+src.length+" item"+(src.length===1?"":"s")+" to "+mealName(cm).toLowerCase());}
+      break;
+    case "wquick":openSheet({mode:"weigh",title:"Log weight"});break;
+    case "wquicksave":
+      var qv=parseFloat(($("#wqKg").value||"").replace(",","."));
+      if(!(qv>=20&&qv<=400)){sh.error="Enter your weight in kilograms, for example 85.4.";paintSheet();break;}
+      S.weights[S.date]=Math.round(qv*100)/100;save();closeSheet();render();snack("Weight saved for "+dayShort(S.date));break;
+    case "bksnooze":try{localStorage.setItem(LS_BKS,String(Date.now()+3*864e5));}catch(e){}render();break;
     case "usefood":
       var f=S.foods.filter(function(x){return x.id===el.getAttribute("data-id");})[0];
       if(f)openSheet({mode:"form",title:"Add food",meal:sh.meal,back:"menu",draft:draftFrom(f,{source:"library"})});break;
