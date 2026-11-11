@@ -298,6 +298,7 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;backgroun
 <div id="sheetHost"></div>
 <div id="snackHost" aria-live="polite"></div>
 
+<script src="foods.js"></script>
 <script>
 (function(){
 "use strict";
@@ -421,7 +422,7 @@ function dayHtml(){
     items.forEach(function(e){
       var s=e.servings||1;
       var sv=(s!==1?fmt(s)+" × ":"")+(e.serving||"1 serving");
-      h+='<button class="entry" data-act="edit" data-id="'+esc(e.id)+'"><span class="main"><span class="name">'+esc(e.name)+(e.source==="photo"?'<span class="tag">'+ic("photo_camera")+'estimate</span>':"")+'</span>'
+      h+='<button class="entry" data-act="edit" data-id="'+esc(e.id)+'"><span class="main"><span class="name">'+esc(e.name)+(e.source==="photo"||e.source==="describe"?'<span class="tag">'+ic(e.source==="photo"?"photo_camera":"chat")+'estimate</span>':"")+'</span>'
         +'<span class="meta">'+esc(sv)+'</span></span>'
         +'<span class="k">'+fmtK(e.kcal*s)+' cal</span></button>';
     });
@@ -482,7 +483,7 @@ function closeSheet(){stopScan();if(S.sheet&&S.sheet.previewUrl)try{URL.revokeOb
 function paintSheet(){
   var sh=S.sheet;
   if(!sh){$("#sheetHost").innerHTML="";return;}
-  var fn={menu:menuHtml,scan:scanHtml,lookup:lookupHtml,unknown:unknownHtml,meal:mealPhotoHtml,label:labelHtml,form:formHtml,override:overrideHtml}[sh.mode];
+  var fn={menu:menuHtml,scan:scanHtml,lookup:lookupHtml,unknown:unknownHtml,meal:mealPhotoHtml,describe:describeHtml,label:labelHtml,form:formHtml,override:overrideHtml}[sh.mode];
   var old=$(".sheet"),keep=old?old.scrollTop:0;
   $("#sheetHost").innerHTML='<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="'+esc(sh.title||"Add food")+'"><div class="handle" aria-hidden="true"></div>'+fn()+'</div></div>';
   if(old){var s=$(".sheet");s.style.animation="none";$(".scrim").style.animation="none";s.scrollTop=keep;}
@@ -506,23 +507,53 @@ function menuHtml(){
   h+='<div class="list">'
     +li("mealphoto","photo_camera","Photograph a meal",ready?"Claude estimates the calories":"Add your Claude API key in Settings first")
     +li("scan","barcode_scanner","Scan a barcode","Looks up the product")
+    +li("describe","chat","Describe it",ready?"Type what you had, Claude estimates the calories":"Add your Claude API key in Settings first")
     +li("manual","edit_note","Enter manually","Type the values yourself")
     +'</div>';
-  h+='<h4>My foods</h4>';
-  if(S.foods.length){
-    h+='<label class="search">'+ic("search")+'<span class="sr">Search my foods</span><input id="libq" type="search" placeholder="Search my foods"></label><div class="list" id="libList">'+libList("")+'</div>';
-  }else{
-    h+='<p class="muted">Foods you save appear here for quick adding.</p>';
-  }
+  h+='<label class="search">'+ic("search")+'<span class="sr">Search foods</span><input id="libq" type="search" placeholder="Search foods, e.g. coffee with milk" autocomplete="off"></label>';
+  h+='<div id="libList">'+libList("")+'</div>';
   return h;
 }
+var COMMON=window.COMMON_FOODS||[];
+function foodRow(f){
+  return '<span class="tx"><b>'+esc(f.name)+'</b><small>'+esc(f.serving||"1 serving")+' · '+fmtK(f.kcal)+' cal</small></span>';
+}
+function myRow(f){
+  return '<div class="libitem"><button class="li" data-act="usefood" data-id="'+esc(f.id)+'">'+foodRow(f)+'</button><button class="iconbtn x" data-act="delfood" data-id="'+esc(f.id)+'" aria-label="Remove '+esc(f.name)+' from My foods">'+ic("delete")+'</button></div>';
+}
+// Every word typed has to appear in the name (or its extra search words). Names that start with the search come first.
+function searchCommon(q){
+  var words=q.split(/\s+/).filter(Boolean),hits=[];
+  COMMON.forEach(function(c,i){
+    var name=c[0].toLowerCase(),hay=name+" "+c[1].toLowerCase()+" "+(c[3]||"");
+    for(var w=0;w<words.length;w++)if(hay.indexOf(words[w])<0)return;
+    var rank=name.indexOf(q)===0?0:name.indexOf(words[0])===0?1:name.indexOf(words[0])>-1?2:3;
+    hits.push({i:i,rank:rank});
+  });
+  hits.sort(function(a,b){return a.rank-b.rank||a.i-b.i;});
+  return hits.slice(0,40);
+}
 function libList(q){
-  q=q.toLowerCase();
-  var items=S.foods.filter(function(f){return !q||f.name.toLowerCase().indexOf(q)>-1;}).slice(0,40);
-  if(!items.length)return '<p class="empty" style="padding:12px 16px">No matches</p>';
-  return items.map(function(f){
-    return '<div class="libitem"><button class="li" data-act="usefood" data-id="'+esc(f.id)+'"><span class="tx"><b>'+esc(f.name)+'</b><small>'+esc(f.serving||"1 serving")+' · '+fmtK(f.kcal)+' cal</small></span></button><button class="iconbtn x" data-act="delfood" data-id="'+esc(f.id)+'" aria-label="Remove '+esc(f.name)+' from My foods">'+ic("delete")+'</button></div>';
-  }).join("");
+  q=q.toLowerCase().trim();
+  var h="";
+  if(!q){
+    h+='<h4>My foods</h4>';
+    if(!S.foods.length)return h+'<p class="muted">Search above for everyday foods like coffee, toast or a banana. Foods you save appear here for quick adding.</p>';
+    return h+'<div class="list">'+S.foods.slice(0,40).map(myRow).join("")+'</div>';
+  }
+  var words=q.split(/\s+/);
+  var mine=S.foods.filter(function(f){var n=f.name.toLowerCase();return words.every(function(w){return n.indexOf(w)>-1;});}).slice(0,20);
+  var common=searchCommon(q);
+  if(mine.length)h+='<h4>My foods</h4><div class="list">'+mine.map(myRow).join("")+'</div>';
+  if(common.length){
+    h+='<h4>Common foods</h4><div class="list">'+common.map(function(x){
+      var c=COMMON[x.i];
+      return '<button class="li" data-act="usecommon" data-i="'+x.i+'">'+foodRow({name:c[0],serving:c[1],kcal:c[2]})+'</button>';
+    }).join("")+'</div><p class="muted" style="margin-top:12px">Typical values. You can change the amount on the next screen.</p>';
+  }
+  if(!mine.length&&!common.length)h+='<p class="muted" style="margin-top:16px">No matches. Try a simpler word, or let Claude estimate it.</p>';
+  h+='<div class="list"><button class="li" data-act="describeq"><span class="av">'+ic("chat")+'</span><span class="tx"><b>Not here? Describe it</b><small>Claude estimates “'+esc(q.slice(0,60))+'”</small></span>'+ic("chevron_right","tr")+'</button></div>';
+  return h;
 }
 
 /* ---------- Barcode scanning ---------- */
@@ -656,8 +687,13 @@ async function shrink(file,max){
     return blob||file;
   }catch(e){return file;}
 }
-function photoErr(e){
+function photoErr(e,text){
   var c=e&&e.code;
+  if(text){
+    if(!navigator.onLine||c==="offline")return "You are offline. Estimates need an internet connection.";
+    if(c==="refused")return "Claude could not estimate that. Try describing it differently.";
+    if(c==="invalid_json"||c==="empty_completion")return "Claude’s reply could not be read. Try again.";
+  }
   if(!navigator.onLine||c==="offline")return "You are offline. Photo estimates need an internet connection.";
   if(c==="bad_key")return "Your Claude API key was not accepted. Check it in Settings.";
   if(c==="no_credit")return "Your Anthropic account has run out of credit. Top it up at platform.claude.com, then try again.";
@@ -684,9 +720,14 @@ function mealPhotoHtml(){
     h+='<div class="row"><button class="btn filled" data-act="estimate" '+(sh.busy?"disabled":"")+'>'+(sh.busy?'<span class="spin"></span>Estimating…':ic("auto_awesome")+"Estimate calories")+'</button></div>';
   }
   if(sh.error)h+=errBox(sh.error);
-  if(sh.results){
+  if(sh.results)h+=estResultsHtml("No food was found in that photo.");
+  return h;
+}
+function estResultsHtml(none){
+  var sh=S.sheet,h="";
+  {
     h+='<div class="banner">'+ic("info")+'<span>Rough estimate. Untick anything wrong, and edit items after adding if the numbers look off.'+(sh.notes?" "+esc(sh.notes):"")+'</span></div>';
-    if(!sh.results.length)h+='<p class="muted">No food was found in that photo.</p>';
+    if(!sh.results.length)h+='<p class="muted">'+none+'</p>';
     var tot=0;
     h+='<div class="list">';
     sh.results.forEach(function(r,i){
@@ -696,6 +737,43 @@ function mealPhotoHtml(){
     h+='</div><div class="row"><button class="btn outlined" data-act="redo">Retry</button><button class="btn filled" data-act="addest" '+(sh.results.length?"":"disabled")+'>Add '+fmtK(tot)+' cal to '+esc(mealName(sh.meal).toLowerCase())+'</button></div>';
   }
   return h;
+}
+function describeHtml(){
+  var sh=S.sheet;
+  var h=head("Describe it",true);
+  if(!photoReady())return h+needKeyHtml();
+  if(!sh.results){
+    h+='<p class="muted">Type what you had and roughly how much. Claude gives a rough estimate for each item.</p>';
+    h+='<label class="field"><span>What did you have?</span><textarea id="descIn" maxlength="500" placeholder="e.g. homemade lasagne, a big slice, with a side salad">'+esc(sh.text||"")+'</textarea></label>';
+    h+='<div class="row"><button class="btn filled" data-act="estimatetext" '+(sh.busy?"disabled":"")+'>'+(sh.busy?'<span class="spin"></span>Estimating…':ic("auto_awesome")+"Estimate calories")+'</button></div>';
+  }else{
+    h+='<p class="muted">“'+esc(sh.text)+'”</p>';
+  }
+  if(sh.error)h+=errBox(sh.error);
+  if(sh.results)h+=estResultsHtml("Claude could not find any food or drink in that description.");
+  return h;
+}
+async function runTextEstimate(){
+  var sh=S.sheet,el=$("#descIn");
+  sh.text=el?el.value.trim().slice(0,500):(sh.text||"");
+  if(!sh.text){sh.error="Type what you had first.";paintSheet();return;}
+  sh.busy=true;sh.error="";paintSheet();
+  try{
+    var m=await getClaude();
+    var out=await m.estimateText(getKey(),sh.text);
+    readEstimate(sh,out);
+  }catch(e){
+    sh.error=photoErr(e,true);
+  }
+  sh.busy=false;
+  if(S.sheet===sh)paintSheet();
+}
+function readEstimate(sh,out){
+  var items=Array.isArray(out&&out.items)?out.items:[];
+  sh.results=items.slice(0,15).map(function(x){
+    return {name:String(x.name||"Food item").slice(0,80),portion:String(x.portion||"1 portion").slice(0,60),kcal:num(x.calories),confidence:["low","medium","high"].indexOf(x.confidence)>-1?x.confidence:"low",on:true};
+  });
+  sh.notes=out&&out.notes?String(out.notes).slice(0,200):"";
 }
 async function onMealFile(file){
   if(!file)return;
@@ -714,11 +792,7 @@ async function runEstimate(){
   try{
     var m=await getClaude();
     var out=await m.estimateMeal(getKey(),pendingBlob,sh.hint);
-    var items=Array.isArray(out&&out.items)?out.items:[];
-    sh.results=items.slice(0,15).map(function(x){
-      return {name:String(x.name||"Food item").slice(0,80),portion:String(x.portion||"1 portion").slice(0,60),kcal:num(x.calories),confidence:["low","medium","high"].indexOf(x.confidence)>-1?x.confidence:"low",on:true};
-    });
-    sh.notes=out&&out.notes?String(out.notes).slice(0,200):"";
+    readEstimate(sh,out);
   }catch(e){
     sh.error=photoErr(e);
   }
@@ -729,7 +803,7 @@ function addEstimates(){
   var sh=S.sheet,k=S.date,added=0,kc=0;
   (sh.results||[]).forEach(function(r){
     if(!r.on)return;
-    (S.days[k]=S.days[k]||[]).push({id:uid(),meal:sh.meal,name:r.name,serving:r.portion,servings:1,kcal:r.kcal,source:"photo",t:Date.now()});
+    (S.days[k]=S.days[k]||[]).push({id:uid(),meal:sh.meal,name:r.name,serving:r.portion,servings:1,kcal:r.kcal,source:sh.mode==="describe"?"describe":"photo",t:Date.now()});
     added++;kc+=r.kcal;
   });
   if(added)save();
@@ -994,15 +1068,20 @@ document.addEventListener("click",function(ev){
     case "usefood":
       var f=S.foods.filter(function(x){return x.id===el.getAttribute("data-id");})[0];
       if(f)openSheet({mode:"form",title:"Add food",meal:sh.meal,back:"menu",draft:draftFrom(f,{source:"library"})});break;
+    case "usecommon":
+      var cf=COMMON[+el.getAttribute("data-i")];
+      if(cf)openSheet({mode:"form",title:"Add food",meal:sh.meal,back:"menu",draft:draftFrom({name:cf[0],serving:cf[1],kcal:cf[2]},{source:"common"})});break;
     case "delfood":
       var did=el.getAttribute("data-id");
       S.foods=S.foods.filter(function(x){return x.id!==did;});save();
-      if(!S.foods.length){paintSheet();break;}
       var q=$("#libq");$("#libList").innerHTML=libList(q?q.value:"");break;
     case "mealphoto":openSheet({mode:"meal",title:"Photograph a meal",meal:sh.meal});break;
     case "pickcam":$("#fMealCam").click();break;
     case "picklib":$("#fMealLib").click();break;
     case "estimate":runEstimate();break;
+    case "describe":openSheet({mode:"describe",title:"Describe it",meal:sh.meal});break;
+    case "describeq":openSheet({mode:"describe",title:"Describe it",meal:sh.meal,text:($("#libq").value||"").trim()});break;
+    case "estimatetext":runTextEstimate();break;
     case "redo":sh.results=null;sh.error="";paintSheet();break;
     case "addest":addEstimates();break;
     case "labelphoto":openSheet({mode:"label",title:"Read a nutrition panel",meal:sh.meal,code:sh.code});break;

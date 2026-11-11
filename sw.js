@@ -1,10 +1,11 @@
 // Offline support. Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = "cd-2026-11-12d";
+const VERSION = "cd-2026-11-12f";
 // No "./" here: Chrome treats it and index.html as the same entry and the whole install fails.
 // Navigations are answered from "index.html" below anyway.
 const SHELL = [
   "index.html",
   "manifest.webmanifest",
+  "foods.js",
   "vendor/claude.js",
   "icons/icon-192.png",
   "icons/icon-512.png",
