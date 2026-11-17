@@ -949,6 +949,10 @@ function addEstimates(){
     if(!r.on)return;
     (S.days[k]=S.days[k]||[]).push({id:uid(),meal:sh.meal,name:r.name,serving:r.portion,servings:1,kcal:r.kcal,source:sh.mode==="describe"?"describe":"photo",t:Date.now()});
     added++;kc+=r.kcal;
+    // Keep every estimate in My foods so it can be found again without another API call.
+    var nm=(r.name||"").toLowerCase(),sv=(r.portion||"").toLowerCase();
+    var known=S.foods.some(function(f){return (f.name||"").toLowerCase()===nm&&(f.serving||"").toLowerCase()===sv;});
+    if(nm&&!known)S.foods.unshift({id:uid(),name:r.name,serving:r.portion,kcal:r.kcal,barcode:""});
   });
   if(added)save();
   var meal=mealName(sh.meal).toLowerCase();
